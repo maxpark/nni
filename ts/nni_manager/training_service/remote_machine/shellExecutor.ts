@@ -36,7 +36,7 @@ class ShellExecutor {
     public isWindows: boolean = false;
 
     constructor() {
-        this.log = getLogger();
+        this.log = getLogger('ShellExecutor');
         this.sshClient = new Client();
     }
 
@@ -169,6 +169,16 @@ class ShellExecutor {
         return this.tempPath;
     }
 
+    public async getCurrentPath(): Promise<string> {
+        const commandText = this.osCommands && this.osCommands.getCurrentPath();
+        const commandResult = await this.execute(commandText);
+        if (commandResult.exitCode == 0) {
+            return commandResult.stdout;
+        } else {
+            throw Error(commandResult.stderr);
+        }
+    }
+
     public getRemoteScriptsPath(experimentId: string): string {
         return this.joinPath(this.getRemoteExperimentRootDir(experimentId), 'scripts');
     }
@@ -267,7 +277,7 @@ class ShellExecutor {
         this.log.debug(`copyFileToRemote(${commandIndex}): localFilePath: ${localFilePath}, remoteFilePath: ${remoteFilePath}`);
 
         const deferred: Deferred<boolean> = new Deferred<boolean>();
-        this.sshClient.sftp((err: Error, sftp: SFTPWrapper) => {
+        this.sshClient.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
             if (err !== undefined && err !== null) {
                 this.log.error(`copyFileToRemote(${commandIndex}): ${err}`);
                 deferred.reject(err);
@@ -318,7 +328,7 @@ class ShellExecutor {
         const commandIndex = randomInt(10000);
         this.log.debug(`getRemoteFileContent(${commandIndex}): filePath: ${filePath}`);
         const deferred: Deferred<string> = new Deferred<string>();
-        this.sshClient.sftp((err: Error, sftp: SFTPWrapper) => {
+        this.sshClient.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
             if (err !== undefined && err !== null) {
                 this.log.error(`getRemoteFileContent(${commandIndex}) sftp: ${err}`);
                 deferred.reject(new Error(`SFTP error: ${err}`));
@@ -366,7 +376,7 @@ class ShellExecutor {
         // Windows always uses shell, and it needs to disable to get it works.
         useShell = useShell && !this.isWindows;
 
-        const callback = (err: Error, channel: ClientChannel): void => {
+        const callback = (err: Error | undefined, channel: ClientChannel): void => {
             if (err !== undefined && err !== null) {
                 this.log.error(`remoteExeCommand(${commandIndex}): ${err.message}`);
                 deferred.reject(err);

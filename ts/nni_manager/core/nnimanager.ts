@@ -10,7 +10,7 @@ import * as component from '../common/component';
 import { DataStore, MetricDataRecord, MetricType, TrialJobInfo } from '../common/datastore';
 import { NNIError } from '../common/errors';
 import { getExperimentId, getDispatcherPipe } from '../common/experimentStartupInfo';
-import { getLogger, Logger } from '../common/log';
+import { Logger, getLogger, stopLogging } from '../common/log';
 import {
     ExperimentProfile, Manager, ExperimentStatus,
     NNIManagerStatus, ProfileUpdateType, TrialJobStatistics
@@ -61,7 +61,7 @@ class NNIManager implements Manager {
         this.trialDataForTuner = '';
         this.readonly = false;
 
-        this.log = getLogger();
+        this.log = getLogger('NNIManager');
         this.dataStore = component.get(DataStore);
         this.status = {
             status: 'INITIALIZED',
@@ -175,12 +175,14 @@ class NNIManager implements Manager {
             nextSequenceId: 0,
             revision: 0
         };
-
+        this.config = config;
         this.log.info(`Starting experiment: ${this.experimentProfile.id}`);
         await this.storeExperimentProfile();
-
-        this.log.info('Setup training service...');
-        this.trainingService = await this.initTrainingService(config);
+        
+        if (this.trainingService === undefined) {
+            this.log.info('Setup training service...');
+            this.trainingService = await this.initTrainingService(config);
+        }
 
         this.log.info('Setup tuner...');
         const dispatcherCommand: string = getMsgDispatcherCommand(config);
@@ -198,18 +200,22 @@ class NNIManager implements Manager {
     }
 
     public async resumeExperiment(readonly: boolean): Promise<void> {
-        this.log.info(`Resuming experiment: ${this.experimentProfile.id}`);
         //Fetch back the experiment profile
         const experimentId: string = getExperimentId();
+        this.log.info(`Resuming experiment: ${experimentId}`);
         this.experimentProfile = await this.dataStore.getExperimentProfile(experimentId);
         this.readonly = readonly;
         if (readonly) {
+            this.setStatus('VIEWED');
             return Promise.resolve();
         }
 
-        this.log.info('Setup training service...');
         const config: ExperimentConfig = this.experimentProfile.params;
-        this.trainingService = await this.initTrainingService(config);
+        this.config = config;
+        if (this.trainingService === undefined) {
+            this.log.info('Setup training service...');
+            this.trainingService = await this.initTrainingService(config);
+        }
 
         this.log.info('Setup tuner...');
         const dispatcherCommand: string = getMsgDispatcherCommand(config);
@@ -254,12 +260,35 @@ class NNIManager implements Manager {
         return this.dataStore.getTrialJob(trialJobId);
     }
 
-    public async setClusterMetadata(_key: string, _value: string): Promise<void> {
-        throw new Error('Calling removed API setClusterMetadata');
+    public async setClusterMetadata(key: string, value: string): Promise<void> {
+        // Hack for supporting v2 config, need refactor
+        if (this.trainingService === undefined) {
+            this.log.info('Setup training service...');
+            switch (key) {
+                case 'kubeflow_config': {
+                    const kubeflowModule = await import('../training_service/kubernetes/kubeflow/kubeflowTrainingService');
+                    this.trainingService = new kubeflowModule.KubeflowTrainingService();
+                    break;
+                }
+                case 'frameworkcontroller_config': {
+                    const fcModule = await import('../training_service/kubernetes/frameworkcontroller/frameworkcontrollerTrainingService');
+                    this.trainingService = new fcModule.FrameworkControllerTrainingService();
+                    break;
+                }
+                case 'adl_config': {
+                    const adlModule = await import('../training_service/kubernetes/adl/adlTrainingService');
+                    this.trainingService = new adlModule.AdlTrainingService();
+                    break;
+                }
+                default:
+                    throw new Error("Setup training service failed.");
+            }
+        }
+        await this.trainingService.setClusterMetadata(key, value);
     }
 
-    public getClusterMetadata(_key: string): Promise<string> {
-        throw new Error('Calling removed API getClusterMetadata');
+    public getClusterMetadata(key: string): Promise<string> {
+        return this.trainingService.getClusterMetadata(key);
     }
 
     public async getTrialJobStatistics(): Promise<TrialJobStatistics[]> {
@@ -333,7 +362,7 @@ class NNIManager implements Manager {
             hasError = true;
             this.log.error(`${err.stack}`);
         } finally {
-            this.log.close();
+            stopLogging();
             process.exit(hasError ? 1 : 0);
         }
     }
@@ -404,13 +433,19 @@ class NNIManager implements Manager {
     }
 
     private async initTrainingService(config: ExperimentConfig): Promise<TrainingService> {
-        this.config = config;
-        const platform = Array.isArray(config.trainingService) ? 'hybrid' : config.trainingService.platform;
+        let platform: string;
+        if (Array.isArray(config.trainingService)) {
+            platform = 'hybrid';
+        } else if (config.trainingService.platform) {
+            platform = config.trainingService.platform;
+        } else {
+            platform = (config as any).trainingServicePlatform;
+        }
+        if (!platform) {
+            throw new Error('Cannot detect training service platform');
+        }
 
-        if (['remote', 'pai', 'aml', 'hybrid'].includes(platform)) {
-            const module_ = await import('../training_service/reusable/routerTrainingService');
-            return new module_.RouterTrainingService(config);
-        } else if (platform === 'local') {
+        if (platform === 'local') {
             const module_ = await import('../training_service/local/localTrainingService');
             return new module_.LocalTrainingService(config);
         } else if (platform === 'kubeflow') {
@@ -422,6 +457,9 @@ class NNIManager implements Manager {
         } else if (platform === 'adl') {
             const module_ = await import('../training_service/kubernetes/adl/adlTrainingService');
             return new module_.AdlTrainingService();
+        } else {
+            const module_ = await import('../training_service/reusable/routerTrainingService');
+            return await module_.RouterTrainingService.construct(config);
         }
 
         throw new Error(`Unsupported training service platform "${platform}"`);
@@ -452,7 +490,7 @@ class NNIManager implements Manager {
         };
         const newEnv = Object.assign({}, process.env, nniEnv);
         const tunerProc: ChildProcess = getTunerProc(command, stdio, newCwd, newEnv);
-        this.dispatcherPid = tunerProc.pid;
+        this.dispatcherPid = tunerProc.pid!;
         this.dispatcher = createDispatcherInterface(tunerProc);
 
         return;
@@ -621,7 +659,7 @@ class NNIManager implements Manager {
                     }
                     const form = this.waitingTrials.shift() as TrialJobApplicationForm;
                     this.currSubmittedTrialNum++;
-                    this.log.info(`submitTrialJob: form: ${JSON.stringify(form)}`);
+                    this.log.info('submitTrialJob: form:', form);
                     const trialJobDetail: TrialJobDetail = await this.trainingService.submitTrialJob(form);
                     const Snapshot: TrialJobDetail = Object.assign({}, trialJobDetail);
                     await this.storeExperimentProfile();
@@ -694,7 +732,7 @@ class NNIManager implements Manager {
     }
 
     private async onTrialJobMetrics(metric: TrialJobMetric): Promise<void> {
-        this.log.debug(`NNIManager received trial job metrics: ${JSON.stringify(metric)}`);
+        this.log.debug('NNIManager received trial job metrics:', metric);
         if (this.trialJobs.has(metric.id)){
             await this.dataStore.storeMetricData(metric.id, metric.data);
             if (this.dispatcher === undefined) {
@@ -702,7 +740,7 @@ class NNIManager implements Manager {
             }
             this.dispatcher.sendCommand(REPORT_METRIC_DATA, metric.data);
         } else {
-            this.log.warning(`NNIManager received non-existent trial job metrics: ${metric}`);
+            this.log.warning('NNIManager received non-existent trial job metrics:', metric);
         }
     }
 
@@ -766,7 +804,7 @@ class NNIManager implements Manager {
                         index: tunerCommand.parameter_index
                     }
                 };
-                this.log.info(`updateTrialJob: job id: ${tunerCommand.trial_job_id}, form: ${JSON.stringify(trialJobForm)}`);
+                this.log.info('updateTrialJob: job id:', tunerCommand.trial_job_id, 'form:', trialJobForm);
                 await this.trainingService.updateTrialJob(tunerCommand.trial_job_id, trialJobForm);
                 if (tunerCommand['parameters'] !== null) {
                     // parameters field is set as empty string if no more hyper parameter can be generated by tuner.
@@ -782,7 +820,7 @@ class NNIManager implements Manager {
                 break;
             }
             case KILL_TRIAL_JOB: {
-                this.log.info(`cancelTrialJob: ${JSON.parse(content)}`);
+                this.log.info('cancelTrialJob:', content);
                 await this.trainingService.cancelTrialJob(JSON.parse(content), true);
                 break;
             }

@@ -82,7 +82,7 @@ export namespace ValidationSchemas {
                     gpuNum: joi.number().min(0).required(),
                     command: joi.string().min(1).required()
                 }),
-                taskRoles: joi.array({
+                taskRoles: joi.array().items({
                     name: joi.string().min(1),
                     taskNum: joi.number().min(1).required(),
                     image: joi.string().min(1),
@@ -98,7 +98,7 @@ export namespace ValidationSchemas {
                         minSucceededTaskCount: joi.number()
                     })
                 }),
-                imagePullSecrets: joi.array({
+                imagePullSecrets: joi.array().items({
                     name: joi.string().min(1).required()
                 }),
                 // ############## adl ###############
@@ -130,6 +130,9 @@ export namespace ValidationSchemas {
                 gpuNum: joi.number().min(1),
                 maxTrialNumPerGpu: joi.number(),
                 useActiveGpu: joi.boolean(),
+            }),
+            adl_config: joi.object({ // eslint-disable-line @typescript-eslint/camelcase
+                // hack for v2 configuration
             }),
             kubeflow_config: joi.object({ // eslint-disable-line @typescript-eslint/camelcase
                 operator: joi.string().min(1).required(),
@@ -194,6 +197,8 @@ export namespace ValidationSchemas {
             nni_manager_ip: joi.object({ // eslint-disable-line @typescript-eslint/camelcase
                 nniManagerIp: joi.string().min(1)
             }),
+            version_check: joi.boolean(), // eslint-disable-line @typescript-eslint/camelcase
+            log_collection: joi.string(), // eslint-disable-line @typescript-eslint/camelcase
             remote_config: joi.object({ // eslint-disable-line @typescript-eslint/camelcase
                 reuse: joi.boolean()
             }),

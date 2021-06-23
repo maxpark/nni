@@ -116,12 +116,12 @@ class Experiment {
     }
 
     get maxExperimentDurationSeconds(): number {
-        const value = this.config.maxExperimentDuration;
+        const value = this.config.maxExperimentDuration || (this.config as any).maxExecDuration;
         return value === undefined ? Infinity : toSeconds(value);
     }
 
     get maxTrialNumber(): number {
-        const value = this.config.maxTrialNumber;
+        const value = this.config.maxTrialNumber || (this.config as any).maxTrialNum;
         return value === undefined ? Infinity : value;
     }
 
@@ -131,15 +131,21 @@ class Experiment {
 
     get optimizeMode(): string {
         for (const algo of [this.config.tuner, this.config.advisor, this.config.assessor]) {
-            if (algo && algo.classArgs && algo.classArgs['optimizeMode']) {
-                return algo.classArgs['optimizeMode'];
+            if (algo && algo.classArgs && algo.classArgs['optimize_mode']) {
+                return algo.classArgs['optimize_mode'];
             }
         }
         return 'unknown';
     }
 
     get trainingServicePlatform(): string {
-        return this.config.trainingService.platform;
+        if (Array.isArray(this.config.trainingService)) {
+            return 'hybrid';
+        } else if (this.config.trainingService) {
+            return this.config.trainingService.platform;
+        } else {
+            return (this.config as any).trainingServicePlatform;
+        }
     }
 
     get searchSpace(): object {

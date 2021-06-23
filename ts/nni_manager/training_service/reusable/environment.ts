@@ -82,7 +82,7 @@ export class EnvironmentInformation {
     public useSharedStorage?: boolean;
 
     constructor(id: string, name: string, envId?: string) {
-        this.log = getLogger();
+        this.log = getLogger('EnvironmentInformation');
         this.id = id;
         this.name = name;
         this.envId = envId ? envId : name;
@@ -116,7 +116,7 @@ export class EnvironmentInformation {
         const gpuSummary = this.gpuSummaries.get(this.defaultNodeId);
         if (gpuSummary === undefined) {
             if (false === this.isNoGpuWarned) {
-                this.log.warning(`EnvironmentInformation: ${this.envId} no default gpu found. current gpu info ${JSON.stringify(this.gpuSummaries)}`);
+                this.log.warning(`EnvironmentInformation: ${this.envId} no default gpu found. current gpu info`,  this.gpuSummaries);
                 this.isNoGpuWarned = true;
             }
         } else {
@@ -127,6 +127,10 @@ export class EnvironmentInformation {
 }
 
 export abstract class EnvironmentService {
+
+    public async init(): Promise<void> {
+        return;
+    }
 
     public abstract get hasStorageService(): boolean;
     public abstract refreshEnvironmentsStatus(environments: EnvironmentInformation[]): Promise<void>;
