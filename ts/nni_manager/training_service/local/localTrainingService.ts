@@ -1,24 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-'use strict';
-import * as cp from 'child_process';
+import cp from 'child_process';
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as ts from 'tail-stream';
-import * as tkill from 'tree-kill';
-import { NNIError, NNIErrorNames } from '../../common/errors';
-import { getExperimentId } from '../../common/experimentStartupInfo';
-import { getLogger, Logger } from '../../common/log';
+import fs from 'fs';
+import path from 'path';
+import ts from 'tail-stream';
+import tkill from 'tree-kill';
+import { NNIError, NNIErrorNames } from 'common/errors';
+import { getExperimentId } from 'common/experimentStartupInfo';
+import { getLogger, Logger } from 'common/log';
+import { powershellString } from 'common/shellUtils';
 import {
     HyperParameters, TrainingService, TrialJobApplicationForm,
-    TrialJobDetail, TrialJobMetric, TrialJobStatus, LogType
-} from '../../common/trainingService';
+    TrialJobDetail, TrialJobMetric, TrialJobStatus
+} from 'common/trainingService';
 import {
     delay, generateParamFileName, getExperimentRootDir, getJobCancelStatus, getNewLine, isAlive, uniqueString
-} from '../../common/utils';
-import { ExperimentConfig, LocalConfig, flattenConfig } from '../../common/experimentConfig';
+} from 'common/utils';
+import { ExperimentConfig, LocalConfig, flattenConfig } from 'common/experimentConfig';
 import { execMkdir, execNewFile, getScriptName, runScript, setEnvironmentVariable } from '../common/util';
 import { GPUScheduler } from './gpuScheduler';
 
@@ -170,18 +170,20 @@ class LocalTrainingService implements TrainingService {
         return trialJob;
     }
 
-    public async getTrialLog(trialJobId: string, logType: LogType): Promise<string> {
-        let logPath: string;
-        if (logType === 'TRIAL_LOG') {
-            logPath = path.join(this.rootDir, 'trials', trialJobId, 'trial.log');
-        } else if (logType === 'TRIAL_STDOUT'){
-            logPath = path.join(this.rootDir, 'trials', trialJobId, 'stdout');
-        } else if (logType === 'TRIAL_ERROR') {
-            logPath = path.join(this.rootDir, 'trials', trialJobId, 'stderr');
-        } else {
-            throw new Error('unexpected log type');
+    public async getTrialFile(trialJobId: string, fileName: string): Promise<string | Buffer> {
+        // check filename here for security
+        if (!['trial.log', 'stderr', 'model.onnx', 'stdout'].includes(fileName)) {
+            throw new Error(`File unaccessible: ${fileName}`);
         }
-        return fs.promises.readFile(logPath, 'utf8');
+        let encoding: string | null = null;
+        if (!fileName.includes('.') || fileName.match(/.*\.(txt|log)/g)) {
+            encoding = 'utf8';
+        }
+        const logPath = path.join(this.rootDir, 'trials', trialJobId, fileName);
+        if (!fs.existsSync(logPath)) {
+            throw new Error(`File not found: ${logPath}`);
+        }
+        return fs.promises.readFile(logPath, {encoding: encoding as any});
     }
 
     public addTrialJobMetricListener(listener: (metric: TrialJobMetric) => void): void {
@@ -235,8 +237,10 @@ class LocalTrainingService implements TrainingService {
             return Promise.resolve();
         }
         tkill(trialJob.pid, 'SIGTERM');
+        this.setTrialJobStatus(trialJob, getJobCancelStatus(isEarlyStopped));
+
         const startTime = Date.now();
-        while(await isAlive(trialJob.pid)) {    
+        while(await isAlive(trialJob.pid)) {
             if (Date.now() - startTime > 4999) {
                 tkill(trialJob.pid, 'SIGKILL', (err) => {
                     if (err) {
@@ -247,8 +251,6 @@ class LocalTrainingService implements TrainingService {
             }
             await delay(500);
         }
-
-        this.setTrialJobStatus(trialJob, getJobCancelStatus(isEarlyStopped));
 
         return Promise.resolve();
     }
@@ -444,7 +446,7 @@ class LocalTrainingService implements TrainingService {
         if (process.platform !== 'win32') {
             runScriptContent.push('#!/bin/bash');
         } else {
-            runScriptContent.push(`$env:PATH="${process.env.path}"`)
+            runScriptContent.push(`$env:PATH=${powershellString(process.env['path']!)}`)
         }
         for (const variable of variables) {
             runScriptContent.push(setEnvironmentVariable(variable));

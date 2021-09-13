@@ -12,7 +12,7 @@ from .updater import update_searchspace, update_concurrency, update_duration, up
 from .nnictl_utils import stop_experiment, trial_ls, trial_kill, list_experiment, experiment_status,\
                           log_trial, experiment_clean, platform_clean, experiment_list, \
                           monitor_experiment, export_trials_data, trial_codegen, webui_url, \
-                          get_config, log_stdout, log_stderr, search_space_auto_gen, webui_nas, \
+                          get_config, log_stdout, log_stderr, search_space_auto_gen, \
                           save_experiment, load_experiment
 from .algo_management import algo_reg, algo_unreg, algo_show, algo_list
 from .constants import DEFAULT_REST_PORT
@@ -66,12 +66,16 @@ def parse_args():
     parser_resume.add_argument('--port', '-p', default=DEFAULT_REST_PORT, dest='port', type=int, help='the port of restful server')
     parser_resume.add_argument('--debug', '-d', action='store_true', help=' set debug mode')
     parser_resume.add_argument('--foreground', '-f', action='store_true', help=' set foreground mode, print log content to terminal')
+    parser_resume.add_argument('--experiment_dir', '-e', help='resume experiment from external folder, specify the full path of ' \
+                               'experiment folder')
     parser_resume.set_defaults(func=resume_experiment)
 
     # parse view command
     parser_view = subparsers.add_parser('view', help='view a stopped experiment')
     parser_view.add_argument('id', nargs='?', help='The id of the experiment you want to view')
     parser_view.add_argument('--port', '-p', default=DEFAULT_REST_PORT, dest='port', type=int, help='the port of restful server')
+    parser_view.add_argument('--experiment_dir', '-e', help='view experiment from external folder, specify the full path of ' \
+                             'experiment folder')
     parser_view.set_defaults(func=view_experiment)
 
     # parse update command
@@ -184,10 +188,6 @@ def parse_args():
     parser_webui_url = parser_webui_subparsers.add_parser('url', help='show the url of web ui')
     parser_webui_url.add_argument('id', nargs='?', help='the id of experiment')
     parser_webui_url.set_defaults(func=webui_url)
-    parser_webui_nas = parser_webui_subparsers.add_parser('nas', help='show nas ui')
-    parser_webui_nas.add_argument('--port', default=6060, type=int, help='port of nas ui')
-    parser_webui_nas.add_argument('--logdir', default='.', type=str, help='the logdir where nas ui will read data')
-    parser_webui_nas.set_defaults(func=webui_nas)
 
     #parse config command
     parser_config = subparsers.add_parser('config', help='get config information')
@@ -274,8 +274,26 @@ def parse_args():
     'the unit is second')
     parser_top.set_defaults(func=monitor_experiment)
 
+    # jupyter-extension command
+    jupyter_parser = subparsers.add_parser('jupyter-extension', help='install or uninstall JupyterLab extension (internal preview)')
+    jupyter_subparsers = jupyter_parser.add_subparsers()
+    jupyter_install_parser = jupyter_subparsers.add_parser('install', help='install JupyterLab extension')
+    jupyter_install_parser.set_defaults(func=_jupyter_install)
+    jupyter_uninstall_parser = jupyter_subparsers.add_parser('uninstall', help='uninstall JupyterLab extension')
+    jupyter_uninstall_parser.set_defaults(func=_jupyter_uninstall)
+
     args = parser.parse_args()
     args.func(args)
+
+def _jupyter_install(_args):
+    import nni.tools.jupyter_extension.management as jupyter_management
+    jupyter_management.install()
+    print('Successfully installed JupyterLab extension')
+
+def _jupyter_uninstall(_args):
+    import nni.tools.jupyter_extension.management as jupyter_management
+    jupyter_management.uninstall()
+    print('Successfully uninstalled JupyterLab extension')
 
 if __name__ == '__main__':
     parse_args()

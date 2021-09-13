@@ -1,22 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-'use strict';
-
-import * as assert from 'assert';
+import assert from 'assert';
 import { randomBytes } from 'crypto';
-import * as cpp from 'child-process-promise';
-import * as cp from 'child_process';
+import cpp from 'child-process-promise';
+import cp from 'child_process';
 import { ChildProcess, spawn, StdioOptions } from 'child_process';
-import * as fs from 'fs';
-import * as net from 'net';
-import * as os from 'os';
-import * as path from 'path';
-import * as lockfile from 'lockfile';
+import dgram from 'dgram';
+import fs from 'fs';
+import net from 'net';
+import os from 'os';
+import path from 'path';
+import * as timersPromises from 'timers/promises';
+import lockfile from 'lockfile';
 import { Deferred } from 'ts-deferred';
 import { Container } from 'typescript-ioc';
-import * as util from 'util';
-import * as glob from 'glob';
+import glob from 'glob';
 
 import { Database, DataStore } from './datastore';
 import { getExperimentStartupInfo, setExperimentStartupInfo } from './experimentStartupInfo';
@@ -48,39 +47,15 @@ function getExperimentsInfoPath(): string {
     return path.join(os.homedir(), 'nni-experiments', '.experiment');
 }
 
-function mkDirP(dirPath: string): Promise<void> {
-    const deferred: Deferred<void> = new Deferred<void>();
-    fs.exists(dirPath, (exists: boolean) => {
-        if (exists) {
-            deferred.resolve();
-        } else {
-            const parent: string = path.dirname(dirPath);
-            mkDirP(parent).then(() => {
-                fs.mkdir(dirPath, (err: Error | null) => {
-                    if (err) {
-                        deferred.reject(err);
-                    } else {
-                        deferred.resolve();
-                    }
-                });
-            }).catch((err: Error) => {
-                deferred.reject(err);
-            });
-        }
-    });
-
-    return deferred.promise;
+async function mkDirP(dirPath: string): Promise<void> {
+    await fs.promises.mkdir(dirPath, { recursive: true });
 }
 
 function mkDirPSync(dirPath: string): void {
-    if (fs.existsSync(dirPath)) {
-        return;
-    }
-    mkDirPSync(path.dirname(dirPath));
-    fs.mkdirSync(dirPath);
+    fs.mkdirSync(dirPath, { recursive: true });
 }
 
-const delay: (ms: number) => Promise<void> = util.promisify(setTimeout);
+const delay = timersPromises.setTimeout;
 
 /**
  * Convert index to character
@@ -217,28 +192,34 @@ function cleanupUnitTest(): void {
     setExperimentStartupInfo(true, 'unittest', 8080, 'unittest', undefined, logLevel);
 }
 
-let cachedipv4Address: string = '';
+let cachedIpv4Address: string | null = null;
+
 /**
- * Get IPv4 address of current machine
+ * Get IPv4 address of current machine.
  */
-function getIPV4Address(): string {
-    if (cachedipv4Address && cachedipv4Address.length > 0) {
-        return cachedipv4Address;
+async function getIPV4Address(): Promise<string> {
+    if (cachedIpv4Address !== null) {
+        return cachedIpv4Address;
     }
 
-    const networkInterfaces = os.networkInterfaces();
-    if (networkInterfaces.eth0) {
-        for (const item of networkInterfaces.eth0) {
-            if (item.family === 'IPv4') {
-                cachedipv4Address = item.address;
-                return cachedipv4Address;
-            }
+    // creates "udp connection" to a non-exist target, and get local address of the connection.
+    // since udp is connectionless, this does not send actual packets.
+    const socket = dgram.createSocket('udp4');
+    socket.connect(1, '192.0.2.0');
+    for (let i = 0; i < 10; i++) {  // wait the system to initialize "connection"
+        await timersPromises.setTimeout(1);
+        try {
+            cachedIpv4Address = socket.address().address;
+            socket.close();
+            return cachedIpv4Address;
+        } catch (error) {
+            /* retry */
         }
-    } else {
-        throw Error(`getIPV4Address() failed because os.networkInterfaces().eth0 is undefined. Please specify NNI manager IP in config.`);
     }
 
-    throw Error('getIPV4Address() failed because no valid IPv4 address found.')
+    cachedIpv4Address = socket.address().address;  // if it still fails, throw the error
+    socket.close();
+    return cachedIpv4Address;
 }
 
 /**
@@ -260,7 +241,7 @@ function countFilesRecursively(directory: string): Promise<number> {
     const deferred: Deferred<number> = new Deferred<number>();
 
     let timeoutId: NodeJS.Timer
-    const delayTimeout: Promise<number> = new Promise((resolve: Function, reject: Function): void => {
+    const delayTimeout: Promise<number> = new Promise((_resolve: Function, reject: Function): void => {
         // Set timeout and reject the promise once reach timeout (5 seconds)
         timeoutId = setTimeout(() => {
             reject(new Error(`Timeout: path ${directory} has too many files`));
@@ -392,11 +373,11 @@ function unixPathJoin(...paths: any[]): string {
  */
 function withLockSync(func: Function, filePath: string, lockOpts: {[key: string]: any}, ...args: any): any {
     const lockName = path.join(path.dirname(filePath), path.basename(filePath) + `.lock.${process.pid}`);
-    if (typeof lockOpts.stale === 'number'){
+    if (typeof lockOpts['stale'] === 'number'){
         const lockPath = path.join(path.dirname(filePath), path.basename(filePath) + '.lock.*');
         const lockFileNames: string[] = glob.sync(lockPath);
         const canLock: boolean = lockFileNames.map((fileName) => {
-            return fs.existsSync(fileName) && Date.now() - fs.statSync(fileName).mtimeMs < lockOpts.stale;
+            return fs.existsSync(fileName) && Date.now() - fs.statSync(fileName).mtimeMs < lockOpts['stale'];
         }).filter(unexpired=>unexpired === true).length === 0;
         if (!canLock) {
             throw new Error('File has been locked.');

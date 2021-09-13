@@ -16,7 +16,9 @@ _logger = logging.getLogger(__name__)
 def to_v2(v1) -> ExperimentConfig:
     v1 = copy.deepcopy(v1)
     platform = v1.pop('trainingServicePlatform')
-    assert platform in ['local', 'remote', 'openpai', 'aml']
+    assert platform in ['local', 'remote', 'pai', 'aml']
+    if platform == 'pai':
+        platform = 'openpai'
     v2 = ExperimentConfig(platform)
 
     _drop_field(v1, 'authorName')
@@ -27,6 +29,9 @@ def to_v2(v1) -> ExperimentConfig:
     if isinstance(v2.max_experiment_duration, (int, float)):
         v2.max_experiment_duration = str(v2.max_experiment_duration) + 's'
     _move_field(v1, v2, 'maxTrialNum', 'max_trial_number')
+    _move_field(v1, v2, 'maxTrialDuration', 'max_trial_duration')
+    if isinstance(v2.max_trial_duration, (int, float)):
+        v2.max_trial_duration = str(v2.max_trial_duration) + 's'
     _move_field(v1, v2, 'searchSpacePath', 'search_space_file')
     assert not v1.pop('multiPhase', None), 'Multi-phase is no longer supported'
     _deprecate(v1, v2, 'multiThread')
@@ -85,7 +90,7 @@ def to_v2(v1) -> ExperimentConfig:
         if 'memoryMB' in v1_trial:
             ts.trial_memory_size = str(v1_trial.pop('memoryMB')) + 'mb'
         _move_field(v1_trial, ts, 'image', 'docker_image')
-        _deprecate(v1_trial, v2, 'virtualCluster')
+        _move_field(v1_trial, ts, 'virtualCluster', 'virtual_cluster')
         _move_field(v1_trial, ts, 'paiStorageConfigName', 'storage_config_name')
         _move_field(v1_trial, ts, 'paiConfigPath', 'openpaiConfigFile')
 

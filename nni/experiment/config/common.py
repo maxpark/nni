@@ -46,12 +46,25 @@ class CustomAlgorithmConfig(_AlgorithmConfig):
 class TrainingServiceConfig(ConfigBase):
     platform: str
 
+@dataclass(init=False)
 class SharedStorageConfig(ConfigBase):
     storage_type: str
-    local_mount_point: str
+    local_mount_point: PathLike
     remote_mount_point: str
     local_mounted: str
+    storage_account_name: Optional[str] = None
+    storage_account_key: Optional[str] = None
+    container_name: Optional[str] = None
+    nfs_server: Optional[str] = None
+    exported_directory: Optional[str] = None
 
+    def __init__(self, *, _base_path: Optional[Path] = None, **kwargs):
+        kwargs = {util.case_insensitive(key): value for key, value in kwargs.items()}
+        if 'localmountpoint' in kwargs:
+            kwargs['localmountpoint'] = Path(kwargs['localmountpoint']).expanduser()
+            if not kwargs['localmountpoint'].is_absolute():
+                raise ValueError('localMountPoint can only be set as an absolute path.')
+        super().__init__(_base_path=_base_path, **kwargs)
 
 @dataclass(init=False)
 class ExperimentConfig(ConfigBase):
@@ -64,6 +77,7 @@ class ExperimentConfig(ConfigBase):
     trial_gpu_number: Optional[int] = None  # TODO: in openpai cannot be None
     max_experiment_duration: Optional[str] = None
     max_trial_number: Optional[int] = None
+    max_trial_duration: Optional[int] = None
     nni_manager_ip: Optional[str] = None
     use_annotation: bool = False
     debug: bool = False
@@ -99,6 +113,8 @@ class ExperimentConfig(ConfigBase):
         for algo_type in ['tuner', 'assessor', 'advisor']:
             if isinstance(kwargs.get(algo_type), dict):
                 setattr(self, algo_type, _AlgorithmConfig(**kwargs.pop(algo_type)))
+        if isinstance(kwargs.get('sharedstorage'), dict):
+            setattr(self, 'shared_storage', SharedStorageConfig(_base_path=base_path, **kwargs.pop('sharedstorage')))
 
     def canonical(self):
         ret = super().canonical()
@@ -152,6 +168,7 @@ _validation_rules = {
     'trial_gpu_number': lambda value: value >= 0,
     'max_experiment_duration': lambda value: util.parse_time(value) > 0,
     'max_trial_number': lambda value: value > 0,
+    'max_trial_duration': lambda value: util.parse_time(value) > 0,
     'log_level': lambda value: value in ["trace", "debug", "info", "warning", "error", "fatal"],
     'tuner_gpu_indices': lambda value: all(i >= 0 for i in value) and len(value) == len(set(value)),
     'training_service': lambda value: (type(value) is not TrainingServiceConfig, 'cannot be abstract base class')

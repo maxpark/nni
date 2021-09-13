@@ -3,24 +3,22 @@
 
 import atexit
 import logging
+import os
+import socket
 import time
 from dataclasses import dataclass
-import os
 from pathlib import Path
-import socket
 from subprocess import Popen
 from threading import Thread
-import time
 from typing import Any, List, Optional, Union
 
 import colorama
 import psutil
-
 import torch
 import torch.nn as nn
 import nni.runtime.log
-from nni.experiment import Experiment, TrainingServiceConfig
-from nni.experiment import management, launcher, rest
+from nni.common.device import GPUDevice
+from nni.experiment import Experiment, TrainingServiceConfig, launcher, management, rest
 from nni.experiment.config import util
 from nni.experiment.config.base import ConfigBase, PathLike
 from nni.experiment.pipe import Pipe
@@ -28,14 +26,15 @@ from nni.tools.nnictl.command_utils import kill_command
 
 from ..codegen import model_to_pytorch_script
 from ..converter import convert_to_graph
+from ..converter.graph_gen import GraphConverterWithShape
 from ..execution import list_models, set_execution_engine
 from ..execution.python import get_mutation_dict
-from ..graph import Model, Evaluator
+from ..graph import Evaluator
 from ..integration import RetiariiAdvisor
 from ..mutator import Mutator
-from ..nn.pytorch.mutator import process_inline_mutation, extract_mutation_from_pt_module
-from ..strategy import BaseStrategy
+from ..nn.pytorch.mutator import extract_mutation_from_pt_module, process_inline_mutation
 from ..oneshot.interface import BaseOneShotTrainer
+from ..strategy import BaseStrategy
 
 _logger = logging.getLogger(__name__)
 
@@ -48,8 +47,11 @@ class RetiariiExeConfig(ConfigBase):
     trial_code_directory: PathLike = '.'
     trial_concurrency: int
     trial_gpu_number: int = 0
+    devices: Optional[List[Union[str, GPUDevice]]] = None
     max_experiment_duration: Optional[str] = None
     max_trial_number: Optional[int] = None
+    max_concurrency_cgo: Optional[int] = None
+    batch_waiting_time: Optional[int] = None
     nni_manager_ip: Optional[str] = None
     debug: bool = False
     log_level: Optional[str] = None
@@ -58,11 +60,17 @@ class RetiariiExeConfig(ConfigBase):
     training_service: TrainingServiceConfig
     execution_engine: str = 'py'
 
+    # input used in GraphConverterWithShape. Currently support shape tuple only.
+    dummy_input: Optional[List[int]] = None
+
+    # input used for benchmark engine.
+    benchmark: Optional[str] = None
+
     def __init__(self, training_service_platform: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
         if training_service_platform is not None:
             assert 'training_service' not in kwargs
-            self.training_service = util.training_service_config_factory(platform = training_service_platform)
+            self.training_service = util.training_service_config_factory(platform=training_service_platform)
         self.__dict__['trial_command'] = 'python3 -m nni.retiarii.trial_entry py'
 
     def __setattr__(self, key, value):
@@ -74,7 +82,7 @@ class RetiariiExeConfig(ConfigBase):
         if key == 'trial_code_directory' and not (value == Path('.') or os.path.isabs(value)):
             raise AttributeError(f'{key} is not supposed to be set in Retiarii mode by users!')
         if key == 'execution_engine':
-            assert value in ['base', 'py', 'cgo'], f'The specified execution engine "{value}" is not supported.'
+            assert value in ['base', 'py', 'cgo', 'benchmark'], f'The specified execution engine "{value}" is not supported.'
             self.__dict__['trial_command'] = 'python3 -m nni.retiarii.trial_entry ' + value
         self.__dict__[key] = value
 
@@ -106,7 +114,8 @@ _validation_rules = {
     'training_service': lambda value: (type(value) is not TrainingServiceConfig, 'cannot be abstract base class')
 }
 
-def preprocess_model(base_model, trainer, applied_mutators, full_ir=True):
+
+def preprocess_model(base_model, trainer, applied_mutators, full_ir=True, dummy_input=None):
     # TODO: this logic might need to be refactored into execution engine
     if full_ir:
         try:
@@ -114,7 +123,13 @@ def preprocess_model(base_model, trainer, applied_mutators, full_ir=True):
         except Exception as e:
             _logger.error('Your base model cannot be parsed by torch.jit.script, please fix the following error:')
             raise e
-        base_model_ir = convert_to_graph(script_module, base_model)
+        if dummy_input is not None:
+            # FIXME: this is a workaround as full tensor is not supported in configs
+            dummy_input = torch.randn(*dummy_input)
+            converter = GraphConverterWithShape()
+            base_model_ir = convert_to_graph(script_module, base_model, converter, dummy_input=dummy_input)
+        else:
+            base_model_ir = convert_to_graph(script_module, base_model)
         # handle inline mutations
         mutators = process_inline_mutation(base_model_ir)
     else:
@@ -123,10 +138,11 @@ def preprocess_model(base_model, trainer, applied_mutators, full_ir=True):
 
     if mutators is not None and applied_mutators:
         raise RuntimeError('Have not supported mixed usage of LayerChoice/InputChoice and mutators, '
-                            'do not use mutators when you use LayerChoice/InputChoice')
+                           'do not use mutators when you use LayerChoice/InputChoice')
     if mutators is not None:
         applied_mutators = mutators
     return base_model_ir, applied_mutators
+
 
 def debug_mutated_model(base_model, trainer, applied_mutators):
     """
@@ -171,13 +187,16 @@ class RetiariiExperiment(Experiment):
 
     def _start_strategy(self):
         base_model_ir, self.applied_mutators = preprocess_model(
-            self.base_model, self.trainer, self.applied_mutators, full_ir=self.config.execution_engine != 'py')
+            self.base_model, self.trainer, self.applied_mutators,
+            full_ir=self.config.execution_engine not in ['py', 'benchmark'],
+            dummy_input=self.config.dummy_input
+        )
 
         _logger.info('Start strategy...')
         self.strategy.run(base_model_ir, self.applied_mutators)
         _logger.info('Strategy exit')
         # TODO: find out a proper way to show no more trial message on WebUI
-        #self._dispatcher.mark_experiment_as_ending()
+        # self._dispatcher.mark_experiment_as_ending()
 
     def start(self, port: int = 8080, debug: bool = False) -> None:
         """
@@ -199,10 +218,19 @@ class RetiariiExperiment(Experiment):
             engine = BaseExecutionEngine()
         elif self.config.execution_engine == 'cgo':
             from ..execution.cgo_engine import CGOExecutionEngine
-            engine = CGOExecutionEngine()
+
+            # assert self.config.trial_gpu_number==1, "trial_gpu_number must be 1 to use CGOExecutionEngine"
+            assert self.config.batch_waiting_time is not None
+            devices = self._construct_devices()
+            engine = CGOExecutionEngine(devices,
+                                        max_concurrency=self.config.max_concurrency_cgo,
+                                        batch_waiting_time=self.config.batch_waiting_time)
         elif self.config.execution_engine == 'py':
             from ..execution.python import PurePythonExecutionEngine
             engine = PurePythonExecutionEngine()
+        elif self.config.execution_engine == 'benchmark':
+            from ..execution.benchmark import BenchmarkExecutionEngine
+            engine = BenchmarkExecutionEngine(self.config.benchmark)
         set_execution_engine(engine)
 
         self.id = management.generate_experiment_id()
@@ -240,6 +268,17 @@ class RetiariiExperiment(Experiment):
         # TODO: the experiment should be completed, when strategy exits and there is no running job
         _logger.info('Waiting for experiment to become DONE (you can ctrl+c if there is no running trial jobs)...')
         exp_status_checker.join()
+
+    def _construct_devices(self):
+        devices = []
+        if hasattr(self.config.training_service, 'machine_list'):
+            for machine in self.config.training_service.machine_list:
+                for gpu_idx in machine.gpu_indices:
+                    devices.append(GPUDevice(machine.host, gpu_idx))
+        else:
+            for gpu_idx in self.config.training_service.gpu_indices:
+                devices.append(GPUDevice('local', gpu_idx))
+        return devices
 
     def _create_dispatcher(self):
         return self._dispatcher
@@ -286,7 +325,12 @@ class RetiariiExperiment(Experiment):
         """
         _logger.info('Stopping experiment, please wait...')
         atexit.unregister(self.stop)
- 
+
+        # stop strategy first
+        if self._dispatcher_thread is not None:
+            self._dispatcher.stopping = True
+            self._dispatcher_thread.join(timeout=1)
+
         if self.id is not None:
             nni.runtime.log.stop_experiment_log(self.id)
         if self._proc is not None:
@@ -302,9 +346,6 @@ class RetiariiExperiment(Experiment):
 
         if self._pipe is not None:
             self._pipe.close()
-        if self._dispatcher_thread is not None:
-            self._dispatcher.stopping = True
-            self._dispatcher_thread.join(timeout=1)
 
         self.id = None
         self.port = None

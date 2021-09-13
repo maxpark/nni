@@ -1,23 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-'use strict';
-
 import { EventEmitter } from 'events';
-import * as fs from 'fs';
-import * as path from 'path';
+import fs from 'fs';
+import path from 'path';
 import { Writable } from 'stream';
 import { Container, Scope } from 'typescript-ioc';
 import { String } from 'typescript-string-operations';
-import * as component from '../../common/component';
-import { NNIError, NNIErrorNames, MethodNotImplementedError } from '../../common/errors';
-import { getBasePort, getExperimentId } from '../../common/experimentStartupInfo';
-import { getLogger, Logger } from '../../common/log';
-import { TrainingService, TrialJobApplicationForm, TrialJobMetric, TrialJobStatus, LogType } from '../../common/trainingService';
-import { delay, getExperimentRootDir, getIPV4Address, getLogLevel, getVersion, mkDirPSync, randomSelect, uniqueString } from '../../common/utils';
-import { ExperimentConfig, SharedStorageConfig } from '../../common/experimentConfig';
-import { GPU_INFO, INITIALIZED, KILL_TRIAL_JOB, NEW_TRIAL_JOB, REPORT_METRIC_DATA, SEND_TRIAL_JOB_PARAMETER, STDOUT, TRIAL_END, VERSION_CHECK } from '../../core/commands';
-import { ScheduleResultType } from '../../training_service/common/gpuData';
+import * as component from 'common/component';
+import { NNIError, NNIErrorNames, MethodNotImplementedError } from 'common/errors';
+import { getBasePort, getExperimentId } from 'common/experimentStartupInfo';
+import { getLogger, Logger } from 'common/log';
+import { TrainingService, TrialJobApplicationForm, TrialJobMetric, TrialJobStatus } from 'common/trainingService';
+import { delay, getExperimentRootDir, getIPV4Address, getLogLevel, getVersion, mkDirPSync, randomSelect, uniqueString } from 'common/utils';
+import { ExperimentConfig, SharedStorageConfig } from 'common/experimentConfig';
+import { GPU_INFO, INITIALIZED, KILL_TRIAL_JOB, NEW_TRIAL_JOB, REPORT_METRIC_DATA, SEND_TRIAL_JOB_PARAMETER, STDOUT, TRIAL_END, VERSION_CHECK } from 'core/commands';
+import { ScheduleResultType } from 'training_service/common/gpuData';
 import { CONTAINER_INSTALL_NNI_SHELL_FORMAT } from '../common/containerJobData';
 import { CONTAINER_INSTALL_NNI_SHELL_FORMAT_FOR_WIN } from '../common/containerJobData';
 import { TrialConfig } from '../common/trialConfig';
@@ -157,7 +155,7 @@ class TrialDispatcher implements TrainingService {
         return trial;
     }
 
-    public async getTrialLog(_trialJobId: string, _logType: LogType): Promise<string> {
+    public async getTrialFile(_trialJobId: string, _fileName: string): Promise<string | Buffer> {
         throw new MethodNotImplementedError();
     }
 
@@ -216,7 +214,7 @@ class TrialDispatcher implements TrainingService {
         for(const environmentService of this.environmentServiceList) {
             
             const runnerSettings: RunnerSettings = new RunnerSettings();
-            runnerSettings.nniManagerIP = this.config.nniManagerIp === undefined? getIPV4Address() : this.config.nniManagerIp;
+            runnerSettings.nniManagerIP = this.config.nniManagerIp === undefined? await getIPV4Address() : this.config.nniManagerIp;
             runnerSettings.nniManagerPort = getBasePort() + 1;
             runnerSettings.commandChannel = environmentService.getCommandChannel.channelName;
             runnerSettings.enableGpuCollector = this.enableGpuScheduler;
@@ -535,8 +533,8 @@ class TrialDispatcher implements TrainingService {
                     if (undefined === trial) {
                         throw new Error(`TrialDispatcher: waiting trial shouldn't be undefined!`);
                     }
-                    const gpuNum = this.config.trialGpuNumber;
-                    const result = this.gpuScheduler.scheduleMachine(reusableEnvironments, gpuNum, trial);
+                    const defaultGpuNum = this.config.trialGpuNumber;
+                    const result = this.gpuScheduler.scheduleMachine(reusableEnvironments, trial.form.placementConstraint!, defaultGpuNum, trial);
                     switch (result.resultType) {
                         case ScheduleResultType.REQUIRE_EXCEED_TOTAL:
                             {
@@ -546,7 +544,7 @@ class TrialDispatcher implements TrainingService {
                                     waitingTrials = [];
                                     this.isLoggedNoGpuAvailable = false;
                                 } else if (reusableEnvironments.length > 0) {
-                                    const errorMessage: string = `TrialDispatcher: REQUIRE_EXCEED_TOTAL Required GPU number ${gpuNum} is too large, no machine can meet`;
+                                    const errorMessage: string = `TrialDispatcher: REQUIRE_EXCEED_TOTAL Required GPU number ${defaultGpuNum} is too large, no machine can meet`;
                                     this.log.error(errorMessage);
                                     throw new NNIError(NNIErrorNames.RESOURCE_NOT_AVAILABLE, errorMessage);
                                 } else {
@@ -709,8 +707,11 @@ class TrialDispatcher implements TrainingService {
             throw new Error(`${environment.id} environmentService not initialized!`);
         }
         trial.message = `Platform: ${environment.environmentService.getName}, environment: ${environment.id}`;
-        if (environment.environmentService.hasStorageService) {	
-            const storageService = component.get<StorageService>(StorageService);	
+        if (this.useSharedStorage) {
+            const storageService = component.get<SharedStorageService>(SharedStorageService).storageService;
+            trial.workingDirectory = storageService.joinPath('trials', trial.id);
+        } else if (environment.environmentService.hasStorageService) {	
+            const storageService = component.get<StorageService>(StorageService);
             trial.workingDirectory = storageService.joinPath('trials', trial.id);
         }	
         trial.settings = {
@@ -732,6 +733,9 @@ class TrialDispatcher implements TrainingService {
      * @param trial 
      */
     private releaseEnvironment(trial: TrialDetail): void {
+        if (true === this.enableGpuScheduler) {
+            this.gpuScheduler.removeGpuReservation(trial);
+        }
         if (trial.environment !== undefined) {
             if (trial.environment.runningTrialCount <= 0) {
                 throw new Error(`TrialDispatcher: environment ${trial.environment.id} has no counted running trial!`);
@@ -739,9 +743,6 @@ class TrialDispatcher implements TrainingService {
             trial.environment.runningTrialCount--;
             trial.environment.latestTrialReleasedTime = Date.now();
             trial.environment = undefined;
-        }
-        if (true === this.enableGpuScheduler) {
-            this.gpuScheduler.removeGpuReservation(trial);
         }
     }
 

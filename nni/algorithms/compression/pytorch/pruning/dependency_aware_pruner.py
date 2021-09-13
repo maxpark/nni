@@ -2,10 +2,10 @@
 # Licensed under the MIT license.
 
 import logging
-from schema import And, Optional, SchemaError
+from schema import And, Optional
 from nni.common.graph_utils import TorchModuleGraph
 from nni.compression.pytorch.utils.shape_dependency import ChannelDependency, GroupDependency
-from nni.compression.pytorch.utils.config_validation import CompressorSchema
+from nni.compression.pytorch.utils.config_validation import PrunerSchema
 from nni.compression.pytorch.compressor import Pruner
 from .constants import MASKER_DICT
 
@@ -44,9 +44,8 @@ class DependencyAwarePruner(Pruner):
             self._unwrap_model()
             self.graph = TorchModuleGraph(model, dummy_input)
             self._wrap_model()
-            self.channel_depen = ChannelDependency(
-                traced_model=self.graph.trace)
-            self.group_depen = GroupDependency(traced_model=self.graph.trace)
+            self.channel_depen = ChannelDependency(model, dummy_input, traced_model=self.graph.trace)
+            self.group_depen = GroupDependency(model, dummy_input, traced_model=self.graph.trace)
             self.channel_depen = self.channel_depen.dependency_sets
             self.channel_depen = {
                 name: sets for sets in self.channel_depen for name in sets}
@@ -82,7 +81,7 @@ class DependencyAwarePruner(Pruner):
             self._dependency_update_mask()
 
     def validate_config(self, model, config_list):
-        schema = CompressorSchema([{
+        schema = PrunerSchema([{
             Optional('sparsity'): And(float, lambda n: 0 < n < 1),
             Optional('op_types'): ['Conv2d'],
             Optional('op_names'): [str],
@@ -90,9 +89,6 @@ class DependencyAwarePruner(Pruner):
         }], model, logger)
 
         schema.validate(config_list)
-        for config in config_list:
-            if 'exclude' not in config and 'sparsity' not in config:
-                raise SchemaError('Either sparisty or exclude must be specified!')
 
     def _supported_dependency_aware(self):
         raise NotImplementedError

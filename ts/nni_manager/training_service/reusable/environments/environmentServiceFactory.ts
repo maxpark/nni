@@ -2,11 +2,13 @@ import { AMLEnvironmentService } from './amlEnvironmentService';
 import { OpenPaiEnvironmentService } from './openPaiEnvironmentService';
 import { LocalEnvironmentService } from './localEnvironmentService';
 import { RemoteEnvironmentService } from './remoteEnvironmentService';
+import { KubeflowEnvironmentService } from './kubernetes/kubeflowEnvironmentService';
 import { EnvironmentService } from '../environment';
-import { ExperimentConfig } from '../../../common/experimentConfig';
-import { ExperimentStartupInfo } from '../../../common/experimentStartupInfo';
-import { getCustomEnvironmentServiceConfig } from '../../../common/nniConfig';
-import { importModule } from '../../../common/utils';
+import { ExperimentConfig } from 'common/experimentConfig';
+import { ExperimentStartupInfo } from 'common/experimentStartupInfo';
+import { getCustomEnvironmentServiceConfig } from 'common/nniConfig';
+import { importModule } from 'common/utils';
+import { DlcEnvironmentService } from './dlcEnvironmentService';
 
 export async function createEnvironmentService(name: string, config: ExperimentConfig): Promise<EnvironmentService> {
     const info = ExperimentStartupInfo.getInstance();
@@ -20,6 +22,10 @@ export async function createEnvironmentService(name: string, config: ExperimentC
             return new AMLEnvironmentService(config, info);
         case 'openpai':
             return new OpenPaiEnvironmentService(config, info);
+        case 'kubeflow':
+            return new KubeflowEnvironmentService(config, info);
+        case 'dlc':
+            return new DlcEnvironmentService(config, info);
     }
 
     const esConfig = await getCustomEnvironmentServiceConfig(name);

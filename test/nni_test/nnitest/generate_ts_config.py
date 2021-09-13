@@ -33,6 +33,8 @@ def update_training_service_config(args):
             config[args.ts]['trial']['paiStorageConfigName'] = args.pai_storage_config_name
         if args.vc is not None:
             config[args.ts]['trial']['virtualCluster'] = args.vc
+        if args.debug is not None:
+            config[args.ts]['debug'] = args.debug.lower() == 'true'
     elif args.ts == 'kubeflow':
         if args.nfs_server is not None:
             config[args.ts]['kubeflowConfig']['nfs']['server'] = args.nfs_server
@@ -74,6 +76,16 @@ def update_training_service_config(args):
             config[args.ts]['machineList'][0]['passwd'] = args.remote_pwd
         if args.remote_reuse is not None:
             config[args.ts]['remoteConfig']['reuse'] = args.remote_reuse.lower() == 'true'
+        if args.azurestoragetoken is not None:
+            config[args.ts]['sharedStorage']['storageAccountKey'] = args.azurestoragetoken
+        if args.nfs_server is not None:
+            config[args.ts]['sharedStorage']['nfsServer'] = args.nfs_server
+        if args.local_mount_point is not None:
+            config[args.ts]['sharedStorage']['localMountPoint'] = args.local_mount_point
+        if args.remote_mount_point is not None:
+            config[args.ts]['sharedStorage']['remoteMountPoint'] = args.remote_mount_point
+        if args.exported_directory is not None:
+            config[args.ts]['sharedStorage']['exportedDirectory'] = args.exported_directory
     elif args.ts == 'adl':
         if args.nni_docker_image is not None:
             config[args.ts]['trial']['image'] = args.nni_docker_image
@@ -108,6 +120,10 @@ def update_training_service_config(args):
         config[args.ts]['trainingService'][0]['machineList'][0]['host'] = args.remote_host
         config[args.ts]['trainingService'][0]['machineList'][0]['password'] = args.remote_pwd
         config[args.ts]['trainingService'][0]['machineList'][0]['port'] = args.remote_port
+        config[args.ts]['trainingService'][2]['subscriptionId'] = args.subscription_id
+        config[args.ts]['trainingService'][2]['resourceGroup'] = args.resource_group
+        config[args.ts]['trainingService'][2]['workspaceName'] = args.workspace_name
+        config[args.ts]['trainingService'][2]['computeTarget'] = args.compute_target
         config[args.ts]['nni_manager_ip'] = args.nni_manager_ip
         dump_yml_content(TRAINING_SERVICE_FILE_V2, config)
 
@@ -118,6 +134,12 @@ if __name__ == '__main__':
     parser.add_argument("--config_version", type=str, choices=['v1', 'v2'], default='v1')
     parser.add_argument("--nni_docker_image", type=str)
     parser.add_argument("--nni_manager_ip", type=str)
+    # args for remote with shared storage
+    parser.add_argument("--azurestoragetoken", type=str)
+    parser.add_argument("--nfs_server", type=str)
+    parser.add_argument("--local_mount_point", type=str)
+    parser.add_argument("--remote_mount_point", type=str)
+    parser.add_argument("--exported_directory", type=str)
     # args for PAI
     parser.add_argument("--pai_user", type=str)
     parser.add_argument("--pai_pwd", type=str)
@@ -130,8 +152,8 @@ if __name__ == '__main__':
     parser.add_argument("--pai_storage_config_name", type=str)
     parser.add_argument("--nni_manager_nfs_mount_path", type=str)
     parser.add_argument("--container_nfs_mount_path", type=str)
+    parser.add_argument("--debug", type=str)
     # args for kubeflow and frameworkController
-    parser.add_argument("--nfs_server", type=str)
     parser.add_argument("--nfs_path", type=str)
     parser.add_argument("--keyvault_vaultname", type=str)
     parser.add_argument("--keyvault_name", type=str)

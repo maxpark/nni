@@ -43,7 +43,7 @@ def get_module_name(cls_or_func):
             if inspect.getmodule(frm[0]).__name__ == '__main__':
                 # main module found
                 main_file_path = Path(inspect.getsourcefile(frm[0]))
-                if main_file_path.parents[0] != Path('.'):
+                if not Path().samefile(main_file_path.parent):
                     raise RuntimeError(f'You are using "{main_file_path}" to launch your experiment, '
                                        f'please launch the experiment under the directory where "{main_file_path.name}" is located.')
                 module_name = main_file_path.stem
@@ -65,6 +65,10 @@ def get_module_name(cls_or_func):
 def get_importable_name(cls, relocate_module=False):
     module_name = get_module_name(cls) if relocate_module else cls.__module__
     return module_name + '.' + cls.__name__
+
+
+class NoContextError(Exception):
+    pass
 
 
 class ContextStack:
@@ -98,7 +102,8 @@ class ContextStack:
 
     @classmethod
     def top(cls, key: str) -> Any:
-        assert cls._stack[key], 'Context is empty.'
+        if not cls._stack[key]:
+            raise NoContextError('Context is empty.')
         return cls._stack[key][-1]
 
 

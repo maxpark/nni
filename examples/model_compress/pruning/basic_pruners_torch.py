@@ -20,6 +20,7 @@ from torchvision import datasets, transforms
 sys.path.append('../models')
 from mnist.lenet import LeNet
 from cifar10.vgg import VGG
+from cifar10.resnet import ResNet18
 
 from nni.compression.pytorch.utils.counter import count_flops_params
 
@@ -119,6 +120,12 @@ def get_model_optimizer_scheduler(args, device, train_loader, test_loader, crite
             optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4)
             scheduler = MultiStepLR(
                 optimizer, milestones=[int(args.pretrain_epochs * 0.5), int(args.pretrain_epochs * 0.75)], gamma=0.1)
+    elif args.model == 'resnet18':
+        model = ResNet18().to(device)
+        if args.pretrained_model_dir is None:
+            optimizer = torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4)
+            scheduler = MultiStepLR(
+                optimizer, milestones=[int(args.pretrain_epochs * 0.5), int(args.pretrain_epochs * 0.75)], gamma=0.1)
     else:
         raise ValueError("model not recognized")
 
@@ -143,7 +150,7 @@ def get_model_optimizer_scheduler(args, device, train_loader, test_loader, crite
         model.load_state_dict(torch.load(args.pretrained_model_dir))
         best_acc = test(args, model, device, criterion, test_loader)
 
-    # setup new opotimizer for fine-tuning
+    # setup new opotimizer for pruning
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
     scheduler = MultiStepLR(optimizer, milestones=[int(args.pretrain_epochs * 0.5), int(args.pretrain_epochs * 0.75)], gamma=0.1)
 
@@ -192,10 +199,10 @@ def main(args):
     # prepare model and data
     train_loader, test_loader, criterion = get_data(args.dataset, args.data_dir, args.batch_size, args.test_batch_size)
 
-    model, optimizer, scheduler = get_model_optimizer_scheduler(args, device, train_loader, test_loader, criterion)
+    model, optimizer, _ = get_model_optimizer_scheduler(args, device, train_loader, test_loader, criterion)
 
     dummy_input = get_dummy_input(args, device)
-    flops, params, results = count_flops_params(model, dummy_input)
+    flops, params, _ = count_flops_params(model, dummy_input)
     print(f"FLOPs: {flops}, params: {params}")
 
     print(f'start {args.pruner} pruning...')
@@ -218,6 +225,10 @@ def main(args):
         }]
 
     else:
+        if args.global_sort:
+            print('Enable the global_sort mode')
+            # only taylor pruner supports global sort mode currently
+            kw_args['global_sort'] = True
         if args.dependency_aware:
             dummy_input = get_dummy_input(args, device)
             print('Enable the dependency_aware mode')
@@ -243,10 +254,19 @@ def main(args):
 
         # Reproduced result in paper 'PRUNING FILTERS FOR EFFICIENT CONVNETS',
         # Conv_1, Conv_8, Conv_9, Conv_10, Conv_11, Conv_12 are pruned with 50% sparsity, as 'VGG-16-pruned-A'
+        # If you want to skip some layer, you can use 'exclude' like follow.
         if args.pruner == 'slim':
             config_list = [{
                 'sparsity': args.sparsity,
                 'op_types': ['BatchNorm2d'],
+            }]
+        elif args.model == 'resnet18':
+            config_list = [{
+                'sparsity': args.sparsity,
+                'op_types': ['Conv2d']
+            }, {
+                'exclude': True,
+                'op_names': ['layer1.0.conv1', 'layer1.0.conv2']
             }]
         else:
             config_list = [{
@@ -273,11 +293,16 @@ def main(args):
 
     if args.speed_up:
         # Unwrap all modules to normal state
-        pruner._unwrap_model() 
+        pruner._unwrap_model()
         m_speedup = ModelSpeedup(model, dummy_input, mask_path, device)
         m_speedup.speedup_model()
 
     print('start finetuning...')
+
+    # Optimizer used in the pruner might be patched, so recommend to new an optimizer for fine-tuning stage.
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=5e-4)
+    scheduler = MultiStepLR(optimizer, milestones=[int(args.pretrain_epochs * 0.5), int(args.pretrain_epochs * 0.75)], gamma=0.1)
+
     best_top1 = 0
     save_path = os.path.join(args.experiment_data_dir, f'finetuned.pth')
     for epoch in range(args.fine_tune_epochs):
@@ -331,6 +356,8 @@ if __name__ == '__main__':
                         help='target overall target sparsity')
     parser.add_argument('--dependency-aware', action='store_true', default=False,
                         help='toggle dependency aware mode')
+    parser.add_argument('--global-sort', action='store_true', default=False,
+                        help='toggle global sort mode')
     parser.add_argument('--pruner', type=str, default='l1filter',
                         choices=['level', 'l1filter', 'l2filter', 'slim', 'agp',
                                  'fpgm', 'mean_activation', 'apoz', 'taylorfo'],

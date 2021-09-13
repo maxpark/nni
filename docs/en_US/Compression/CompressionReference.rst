@@ -91,6 +91,8 @@ Pruners
 ..  autoclass:: nni.algorithms.compression.pytorch.pruning.lottery_ticket.LotteryTicketPruner
     :members:
 
+..  autoclass:: nni.algorithms.compression.pytorch.pruning.transformer_pruner.TransformerHeadPruner
+    :members:
 
 Quantizers
 ^^^^^^^^^^
@@ -138,9 +140,6 @@ Topology Utilities
     :members:
 
 ..  autoclass:: nni.compression.pytorch.utils.shape_dependency.GroupDependency
-    :members:
-
-..  autoclass:: nni.compression.pytorch.utils.mask_conflict.CatMaskPadding
     :members:
 
 ..  autoclass:: nni.compression.pytorch.utils.mask_conflict.GroupMaskConflict
