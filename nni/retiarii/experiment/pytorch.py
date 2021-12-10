@@ -28,13 +28,14 @@ from ..codegen import model_to_pytorch_script
 from ..converter import convert_to_graph
 from ..converter.graph_gen import GraphConverterWithShape
 from ..execution import list_models, set_execution_engine
-from ..execution.python import get_mutation_dict
+from ..execution.utils import get_mutation_dict
 from ..graph import Evaluator
 from ..integration import RetiariiAdvisor
 from ..mutator import Mutator
 from ..nn.pytorch.mutator import extract_mutation_from_pt_module, process_inline_mutation
 from ..oneshot.interface import BaseOneShotTrainer
 from ..strategy import BaseStrategy
+from ..strategy.utils import dry_run_for_formatted_search_space
 
 _logger = logging.getLogger(__name__)
 
@@ -193,6 +194,8 @@ class RetiariiExperiment(Experiment):
         )
 
         _logger.info('Start strategy...')
+        search_space = dry_run_for_formatted_search_space(base_model_ir, self.applied_mutators)
+        self.update_search_space(search_space)
         self.strategy.run(base_model_ir, self.applied_mutators)
         _logger.info('Strategy exit')
         # TODO: find out a proper way to show no more trial message on WebUI
@@ -219,7 +222,8 @@ class RetiariiExperiment(Experiment):
         elif self.config.execution_engine == 'cgo':
             from ..execution.cgo_engine import CGOExecutionEngine
 
-            # assert self.config.trial_gpu_number==1, "trial_gpu_number must be 1 to use CGOExecutionEngine"
+            assert self.config.training_service.platform == 'remote', \
+                "CGO execution engine currently only supports remote training service"
             assert self.config.batch_waiting_time is not None
             devices = self._construct_devices()
             engine = CGOExecutionEngine(devices,
@@ -273,11 +277,10 @@ class RetiariiExperiment(Experiment):
         devices = []
         if hasattr(self.config.training_service, 'machine_list'):
             for machine in self.config.training_service.machine_list:
+                assert machine.gpu_indices is not None, \
+                    'gpu_indices must be set in RemoteMachineConfig for CGO execution engine'
                 for gpu_idx in machine.gpu_indices:
                     devices.append(GPUDevice(machine.host, gpu_idx))
-        else:
-            for gpu_idx in self.config.training_service.gpu_indices:
-                devices.append(GPUDevice('local', gpu_idx))
         return devices
 
     def _create_dispatcher(self):
