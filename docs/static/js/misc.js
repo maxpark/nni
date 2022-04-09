@@ -42,16 +42,33 @@ function hide_nav() {
     }
 }
 
-function hide_toc_header() {
-    const d = $(".md-nav__title.md-nav__title--site");
-    // https://stackoverflow.com/questions/11362085/jquery-get-text-for-element-without-children-text
-    const pageTitle = $("#index--page-root").clone().children().remove().end().text();
-    if (d.text().trim() == pageTitle) {
-        d.hide();
-    }
+// Expand link
+function expand_link() {
+    // on load, collapse all links without active on the inside
+    $(".md-nav__expand").filter(function (index) {
+        return $(".md-nav__link--active", this).length >= 1;
+    }).addClass("md-nav__expand--active");
+
+    // bind click events
+    $(".md-nav__expand > a").click(function (e) {
+        if (window.matchMedia("only screen and (min-width: 76.2em)").matches) {
+            // not a drawer
+            e.preventDefault();
+            
+            const target = $(e.target).parent();
+            if (target.hasClass("md-nav__expand--active")) {
+                target.removeClass("md-nav__expand--active");
+            } else {
+                target.addClass("md-nav__expand--active");
+            }
+
+            return false;
+        }
+        return true;
+    });
 }
 
 $(document).ready(function() {
     hide_nav();
-    hide_toc_header();
+    expand_link();
 });
