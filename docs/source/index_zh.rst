@@ -1,4 +1,4 @@
-.. 57966d1be5afdd7a7fcb74e7ea25b1ec
+.. 954c2f433b4617a40d684df9b1a5f16b
 
 ###########################
 Neural Network Intelligence
@@ -14,10 +14,10 @@ Neural Network Intelligence
     安装 <installation>
     教程<examples>
     超参调优 <hpo/index>
-    神经网络架构搜索<nas/index>
-    模型压缩<compression/index>
-    特征工程<feature_engineering/index>
-    NNI实验 <experiment/overview>
+    神经网络架构搜索<nas/toctree>
+    模型压缩<compression/toctree>
+    特征工程<feature_engineering/toctree>
+    NNI实验 <experiment/toctree>
     HPO API Reference <reference/hpo>
     Experiment API Reference <reference/experiment>
     nnictl Commands <reference/nnictl>
