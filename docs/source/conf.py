@@ -31,7 +31,7 @@ author = 'Microsoft'
 version = ''
 # The full version, including alpha/beta/rc tags
 # FIXME: this should be written somewhere globally
-release = 'v2.7'
+release = 'v2.8'
 
 # -- General configuration ---------------------------------------------------
 
@@ -111,6 +111,7 @@ linkcheck_ignore = [
     r'https://1drv\.ms/',                                   # OneDrive (shortcut)
     r'https://onedrive\.live\.com/',                        # OneDrive
     r'https://www\.openml\.org/',                           # OpenML
+    r'https://ml\.informatik\.uni-freiburg\.de/'
 ]
 
 # Ignore all links located in release.rst
