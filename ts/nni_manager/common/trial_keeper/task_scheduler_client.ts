@@ -58,7 +58,13 @@ export class TaskSchedulerClient {
 
     public async release(trialId: string): Promise<void> {
         if (this.server !== null) {
-            await this.release(trialId);
+            await this.server.release(globals.args.experimentId, trialId);
+        }
+    }
+
+    public onUtilityUpdate(callback: (info: Record<string, any>) => void): void {
+        if (this.server !== null) {
+            this.server.onUtilityUpdate(callback);
         }
     }
 }

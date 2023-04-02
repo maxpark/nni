@@ -1,7 +1,7 @@
 $tableHeight: 520px;
 
 .scrollPanel {
-    height: $tableHeight;
+    height: $tableHeight - 20px;
 }
 
 #succTable {
@@ -12,6 +12,11 @@ $tableHeight: 520px;
 
     .ms-DetailsHeader {
         padding-top: 0;
+    }
+
+    .positionTopSuccess {
+        position: relative;
+        top: 5px;
     }
 
     .succTable-tooltip {

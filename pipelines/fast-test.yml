@@ -110,8 +110,8 @@ stages:
 
     - script: |
         set -e
-        yarn --cwd ts/webui
-        yarn --cwd ts/webui sanity-check
+        npm --prefix ts/webui install
+        npm --prefix ts/webui run sanity-check
       displayName: Sanity check (WebUI)
 
 - stage: filter
@@ -151,6 +151,7 @@ stages:
     - script: |
         set -e
         npm --prefix ts/nni_manager run test
+        npm --prefix ts/nni_manager run test_nnimanager
         cp ts/nni_manager/coverage/cobertura-coverage.xml coverage/typescript.xml
       displayName: TypeScript unit test
 
@@ -174,7 +175,7 @@ stages:
 
   - job: ubuntu_legacy
     pool:
-      vmImage: ubuntu-18.04
+      vmImage: ubuntu-20.04
 
     steps:
     - template: templates/install-dependencies.yml
@@ -198,6 +199,7 @@ stages:
     - script: |
         export PATH=${PWD}/toolchain/node/bin:$PATH
         npm --prefix ts/nni_manager run test
+        npm --prefix ts/nni_manager run test_nnimanager
       displayName: TypeScript unit test
 
   - job: windows
@@ -220,9 +222,10 @@ stages:
       displayName: Python unit test
 
     # temporarily disable this test, add it back after bug fixed
-    # - script: |
-    #     npm --prefix ts/nni_manager run test
-    #   displayName: TypeScript unit test
+    - script: |
+        npm --prefix ts/nni_manager run test
+        npm --prefix ts/nni_manager run test_nnimanager
+      displayName: TypeScript unit test
 
     - script: |
         cd test
@@ -241,13 +244,15 @@ stages:
     - template: templates/install-nni.yml
 
     - script: |
-        CI=true npm --prefix ts/nni_manager run test --exclude test/core/nnimanager.test.ts
-      displayName: TypeScript unit test
-
-    - script: |
         cd test
         python -m pytest ut
       displayName: Python unit test
+
+    - script: |
+        CI=true npm --prefix ts/nni_manager run test
+        # # exclude nnimanager's ut because macos in pipeline is pretty slow
+        # CI=true npm --prefix ts/nni_manager run test_nnimanager
+      displayName: TypeScript unit test
 
     - script: |
         cd test

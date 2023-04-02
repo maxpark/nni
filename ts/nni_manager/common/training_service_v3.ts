@@ -62,7 +62,7 @@ export interface TrainingServiceV3 {
      *  Return trial ID on success.
      *  Return null if the environment is not available.
      **/
-    createTrial(environmentId: string, trialCommand: string, directoryName: string): Promise<string | null>;
+    createTrial(environmentId: string, trialCommand: string, directoryName: string, sequenceId?: number): Promise<string | null>;
 
     /**
      *  Kill a trial.
@@ -117,4 +117,7 @@ export interface TrainingServiceV3 {
      *  Note that `environments` object should be immutable.
      **/
     onEnvironmentUpdate(callback: (environments: EnvironmentInfo[]) => Promise<void>): void;
+
+    // TODO: temporary api
+    downloadTrialDirectory(trialId: string): Promise<string>;
 }
