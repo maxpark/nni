@@ -44,7 +44,7 @@ class MovementPruner(ScheduledPruner):
         Model to be pruned.
     config_list
         A list of dict, each dict configure which module need to be pruned, and how to prune.
-        Please refer :doc:`Compression Config Specification </compression/compression_config_list>` for more information.
+        Please refer :doc:`Compression Config Specification </compression/config_list>` for more information.
     evaluator
         {evaluator_docstring}
     warmup_step
@@ -62,7 +62,8 @@ class MovementPruner(ScheduledPruner):
 
     Examples
     --------
-        TODO
+        Please refer to
+        :githublink:`examples/tutorials/new_pruning_bert_glue.py <examples/tutorials/new_pruning_bert_glue.py>`.
     """.format(evaluator_docstring=_EVALUATOR_DOCSTRING)
 
     @overload
@@ -114,7 +115,7 @@ class MovementPruner(ScheduledPruner):
                         # TODO: here using a shrinked score to save memory, but need to test the speed.
                         score_val = torch.zeros_like(target_space.target)  # type: ignore
                         if target_space._scaler is not None:
-                            score_val = target_space._scaler.shrink(score_val)
+                            score_val = target_space._scaler.shrink(score_val, keepdim=True)
                         target_space._wrapper.register_parameter(MOVEMENT_SCORE_PNAME.format(target_name),
                                                                  torch.nn.Parameter(score_val))
                         score = target_space._get_wrapper_attr(MOVEMENT_SCORE_PNAME.format(target_name))

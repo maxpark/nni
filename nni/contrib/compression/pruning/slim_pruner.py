@@ -36,13 +36,18 @@ class SlimPruner(Pruner):
         Model to be pruned.
     config_list
         A list of dict, each dict configure which module need to be pruned, and how to prune.
-        Please refer :doc:`Compression Config Specification </compression/compression_config_list>` for more information.
+        Please refer :doc:`Compression Config Specification </compression/config_list>` for more information.
     evaluator
         {evaluator_docstring}
     training_steps
         An integer to control steps of training the model and scale factors. Masks will be generated after ``training_steps``.
     regular_scale
         ``regular_scale`` controls the scale factors' penalty.
+    
+    Examples
+    --------
+        Please refer to
+        :githublink:`examples/compression/pruning/slim_pruning.py <examples/compression/pruning/slim_pruning.py>`.
     """.format(evaluator_docstring=_EVALUATOR_DOCSTRING)
 
     @overload
@@ -97,7 +102,7 @@ class SlimPruner(Pruner):
                         # TODO: here using a shrinked score to save memory, but need to test the speed.
                         scaling_factor = torch.ones_like(target_space.target)  # type: ignore
                         if target_space._scaler is not None:
-                            scaling_factor = target_space._scaler.shrink(scaling_factor)
+                            scaling_factor = target_space._scaler.shrink(scaling_factor, keepdim=True)
                         target_space._wrapper.register_parameter(SLIM_SCALING_FACTOR_PNAME.format(target_name),
                                                                  torch.nn.Parameter(scaling_factor))
                         scaling_factor = target_space._get_wrapper_attr(SLIM_SCALING_FACTOR_PNAME.format(target_name))

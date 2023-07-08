@@ -14,7 +14,7 @@ from torch.nn import functional as F
 from torch.fx.node import Node
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
-from .utils import randomize_tensor_inplace, randomize_if_tensor, tree_map_zip, torch_float_dtype
+from .utils import randomize_tensor_inplace, randomize_if_tensor, tree_map_zip, torch_float_dtype, poss_deepcopy
 
 
 class MaskUpdater:
@@ -120,7 +120,7 @@ class DefaultMaskUpdater(MaskUpdater):
         if model_speedup.garbage_collect_values:
             # do memory collect to reduce memory usage
             for to_delete in model_speedup.user_to_last_uses.get(node, []):
-                del model_speedup.node_infos[to_delete]._output_randomize
+                del model_speedup.node_infos[to_delete].output_randomize
 
     def direct_update_postprocess(self, model_speedup: 'ModelSpeedup', node: Node):
         pass
@@ -154,8 +154,8 @@ class DefaultMaskUpdater(MaskUpdater):
 
         # Some operator may have the in_place operations, so we need to clone the input
         # before passing to the model_speedup.module
-        args_cloned = tree_map_zip(lambda t: t.clone() if isinstance(t, torch.Tensor) else t, args)
-        kwargs_cloned = tree_map_zip(lambda t: t.clone() if isinstance(t, torch.Tensor) else t, kwargs)
+        args_cloned = tree_map_zip(lambda t: t.clone() if isinstance(t, torch.Tensor) else poss_deepcopy(t), args)
+        kwargs_cloned = tree_map_zip(lambda t: t.clone() if isinstance(t, torch.Tensor) else poss_deepcopy(t), kwargs)
 
         output = getattr(model_speedup, node.op)(node.target, args_cloned, kwargs_cloned)
 
@@ -372,7 +372,7 @@ class NoChangeMaskUpdater(DefaultMaskUpdater):
             input_node = node.kwargs['input']
         input_mask = model_speedup.node_infos[input_node].output_masks
         model_speedup.node_infos[node].output_masks = \
-            tree_map_zip(lambda t: t.clone().detach() if isinstance(t, torch.Tensor) else t, input_mask)
+            tree_map_zip(lambda t: t.clone().detach() if isinstance(t, torch.Tensor) else poss_deepcopy(t), input_mask)
 
     def indirect_activation(self, model_speedup: 'ModelSpeedup', node: Node):
         if len(node.args) != 0:
@@ -393,7 +393,7 @@ class NoChangeMaskUpdater(DefaultMaskUpdater):
         sub_mask = operator.getitem(arg_0_masks, arg_1_val)
 
         model_speedup.node_infos[node].output_masks = \
-            tree_map_zip(lambda t: t.clone().detach() if isinstance(t, torch.Tensor) else t, sub_mask)
+            tree_map_zip(lambda t: t.clone().detach() if isinstance(t, torch.Tensor) else poss_deepcopy(t), sub_mask)
 
     def indirect_getitem(self, model_speedup: 'ModelSpeedup', node: Node):
         assert len(node.args) == 2
@@ -452,7 +452,7 @@ class NoChangeMaskUpdater(DefaultMaskUpdater):
         if model_speedup.garbage_collect_values:
             # do memory collect to reduce memory usage
             for to_delete in model_speedup.user_to_last_uses.get(node, []):
-                del model_speedup.node_infos[to_delete]._output_randomize
+                del model_speedup.node_infos[to_delete].output_randomize
 
     def indirect_update_process(self, model_speedup: 'ModelSpeedup', node: Node):
         node_info = model_speedup.node_infos[node]
